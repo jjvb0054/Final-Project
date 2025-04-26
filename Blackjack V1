@@ -1,0 +1,238 @@
+#include "main.h"
+#include "app.h"
+#include "stdio.h"
+#include "stdlib.h"
+#include "string.h"
+#include "stdbool.h"
+
+extern UART_HandleTypeDef huart2;
+typedef struct {
+    int player_hand[12];
+    int dealer_hand[12];
+    int player_size;
+    int dealer_size;
+    int player_score;
+    int dealer_score;
+    bool game_over;
+    bool game_active;
+    bool play_again;
+} GameState;
+
+GameState game;
+
+// Function prototypes
+int deal_card(void);
+int calculate_score(int hand[], int size);
+void play_game(void);
+const char* compare(int player_score, int dealer_score);
+void get_user_input(char* input);
+void App_Init(void);
+void App_MainLoop(void);
+void display_game_state(void);
+void process_player_input(void);
+void dealer_play(void);
+void display_final_results(void);
+void reset_game(void);
+void replay(void);
+
+void App_Init(void) {
+    // Initialize random number generator
+    srand(HAL_GetTick());
+    reset_game();
+}
+
+void App_MainLoop(void) {
+    if (game.game_active) {
+        if (!game.game_over) {
+            display_game_state();
+            process_player_input();
+        } else {
+            dealer_play();
+            display_final_results();
+            replay(); // Game completed
+        }
+    }else if (game.play_again){
+    	reset_game();
+    }
+    // Add small delay to prevent CPU overload
+    HAL_Delay(10);
+}
+
+void reset_game(void) {
+    // Reset all game state variables
+    memset(&game, 0, sizeof(game));
+    game.game_active = true;
+
+    // Initial deal
+    game.player_hand[0] = deal_card();
+    game.player_hand[1] = deal_card();
+    game.dealer_hand[0] = deal_card();
+    game.dealer_hand[1] = deal_card();
+    game.player_size = 2;
+    game.dealer_size = 2;
+
+    HAL_UART_Transmit(&huart2, (uint8_t*)"\r\nNew game started!\r\n", 21, HAL_MAX_DELAY);
+}
+
+void replay(void) {
+    char msg[] = "\r\nWould you like to play again? (Y/N): ";
+    HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+
+    char input[2] = {0};
+    get_user_input(input);
+
+    if (input[0] == 'Y' || input[0] == 'y') {
+        game.play_again = true;
+        game.game_active = false; // Will be reset in next MainLoop iteration
+    } else if (input[0] == 'N' || input[0] == 'n') {
+        HAL_UART_Transmit(&huart2, (uint8_t*)"\r\nThanks for playing! Goodbye.\r\n", 31, HAL_MAX_DELAY);
+        game.play_again = false;
+        game.game_active = false;
+    } else {
+        HAL_UART_Transmit(&huart2, (uint8_t*)"\r\nInvalid input. Please try again.\r\n", 36, HAL_MAX_DELAY);
+        replay(); // Recursively ask again
+    }
+}
+
+int deal_card(void) {
+    int cards[] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10, 11};
+    return cards[rand() % 13];
+}
+
+int calculate_score(int hand[], int size) {
+    int sum = 0;
+    int aces = 0;
+
+    for(int i = 0; i < size; i++) {
+        sum += hand[i];
+        if(hand[i] == 11) aces++;
+    }
+
+    if(sum == 21 && size == 2) {
+        return 0; // Blackjack
+    }
+
+    while(sum > 21 && aces > 0) {
+        sum -= 10;
+        aces--;
+    }
+
+    return sum;
+}
+
+void display_game_state(void) {
+    game.player_score = calculate_score(game.player_hand, game.player_size);
+    game.dealer_score = calculate_score(game.dealer_hand, game.dealer_size);
+
+    char msg[100];
+    sprintf(msg, "\r\nYour cards: ");
+    HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+
+    for(int i = 0; i < game.player_size; i++) {
+        sprintf(msg, "%d ", game.player_hand[i]);
+        HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+    }
+
+    sprintf(msg, ", current score: %d\r\n", game.player_score);
+    HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+    sprintf(msg, "Dealer's first card: %d\r\n", game.dealer_hand[0]);
+    HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+}
+
+void process_player_input(void) {
+    char msg[100];
+    sprintf(msg, "Type 'H' to Hit, 'S' to Stand, or 'E' to End game: ");
+    HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+
+    char input[2] = {0};
+    get_user_input(input);
+
+    if(input[0] == 'H' || input[0] == 'h') {
+        game.player_hand[game.player_size++] = deal_card();
+    } else if(input[0] == 'S' || input[0] == 's') {
+        game.game_over = true;
+        return;
+    } else if(input[0] == 'E' || input[0] == 'e') {
+        HAL_UART_Transmit(&huart2, (uint8_t*)"\r\nGame ended by player.\r\n", 23, HAL_MAX_DELAY);
+        game.game_active = false;
+        return;
+    } else {
+        HAL_UART_Transmit(&huart2, (uint8_t*)"\r\nInvalid input. Please try again.\r\n", 36, HAL_MAX_DELAY);
+    }
+
+    // Check game conditions after player action
+    game.player_score = calculate_score(game.player_hand, game.player_size);
+    game.dealer_score = calculate_score(game.dealer_hand, game.dealer_size);
+
+    if(game.player_score == 0 || game.dealer_score == 0 || game.player_score > 21) {
+        game.game_over = true;
+    }
+}
+
+void dealer_play(void) {
+    while(game.dealer_score != 0 && game.dealer_score < 17) {
+        game.dealer_hand[game.dealer_size++] = deal_card();
+        game.dealer_score = calculate_score(game.dealer_hand, game.dealer_size);
+    }
+}
+
+void display_final_results(void) {
+    game.player_score = calculate_score(game.player_hand, game.player_size);
+    game.dealer_score = calculate_score(game.dealer_hand, game.dealer_size);
+
+    char final_msg[200];
+    sprintf(final_msg, "\r\nYour final hand: ");
+    for(int i = 0; i < game.player_size; i++) {
+        char card_str[4];
+        sprintf(card_str, "%d ", game.player_hand[i]);
+        strcat(final_msg, card_str);
+    }
+    sprintf(final_msg + strlen(final_msg), ", final score: %d\r\n", game.player_score);
+
+    strcat(final_msg, "Dealer's final hand: ");
+    for(int i = 0; i < game.dealer_size; i++) {
+        char card_str[4];
+        sprintf(card_str, "%d ", game.dealer_hand[i]);
+        strcat(final_msg, card_str);
+    }
+    sprintf(final_msg + strlen(final_msg), ", final score: %d\r\n", game.dealer_score);
+
+    HAL_UART_Transmit(&huart2, (uint8_t*)final_msg, strlen(final_msg), HAL_MAX_DELAY);
+    const char* result = compare(game.player_score, game.dealer_score);
+    HAL_UART_Transmit(&huart2, (uint8_t*)result, strlen(result), HAL_MAX_DELAY);
+    HAL_UART_Transmit(&huart2, (uint8_t*)"\r\n", 2, HAL_MAX_DELAY);
+}
+
+const char* compare(int player_score, int dealer_score) {
+    if(player_score == dealer_score) {
+        return "It's a draw!";
+    } else if(dealer_score == 0) {
+        return "Dealer has Blackjack! You lose.";
+    } else if(player_score == 0) {
+        return "You win with a Blackjack!";
+    } else if(player_score > 21) {
+        return "You went over. You lose.";
+    } else if(dealer_score > 21) {
+        return "Dealer went over. You win!";
+    } else if(player_score > dealer_score) {
+        return "You win!";
+    } else {
+        return "You lose.";
+    }
+}
+
+void get_user_input(char* input) {
+    uint8_t rx_data;
+    while(1) {
+        if(HAL_UART_Receive(&huart2, &rx_data, 1, HAL_MAX_DELAY) == HAL_OK) {
+            HAL_UART_Transmit(&huart2, &rx_data, 1, HAL_MAX_DELAY);
+            if(rx_data == '\r' || rx_data == '\n') continue;
+            input[0] = (char)rx_data;
+            break;
+        }
+    }
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+    // Handle received data if using interrupts
+}
