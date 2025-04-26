@@ -1,0 +1,212 @@
+#include "main.h"
+#include "app.h"
+#include "stdio.h"
+#include "stdlib.h"
+#include "string.h"
+#include "stdbool.h"
+
+// Define button GPIO pins - adjust these according to your actual connections
+#define HIT_BUTTON_PIN    GPIO_PIN_0
+#define HIT_BUTTON_PORT   GPIOA
+#define STAND_BUTTON_PIN  GPIO_PIN_1
+#define STAND_BUTTON_PORT GPIOA
+#define END_BUTTON_PIN    GPIO_PIN_2
+#define END_BUTTON_PORT   GPIOA
+#define YES_BUTTON_PIN    GPIO_PIN_3
+#define YES_BUTTON_PORT   GPIOA
+#define NO_BUTTON_PIN     GPIO_PIN_4
+#define NO_BUTTON_PORT    GPIOA
+
+typedef struct {
+    int player_hand[12];
+    int dealer_hand[12];
+    int player_size;
+    int dealer_size;
+    int player_score;
+    int dealer_score;
+    bool game_over;
+    bool game_active;
+    bool play_again;
+} GameState;
+
+GameState game;
+
+// Function prototypes
+int deal_card(void);
+int calculate_score(int hand[], int size);
+void play_game(void);
+const char* compare(int player_score, int dealer_score);
+void App_Init(void);
+void App_MainLoop(void);
+void display_game_state(void);
+void process_player_input(void);
+void dealer_play(void);
+void display_final_results(void);
+void reset_game(void);
+void replay(void);
+uint8_t read_button(GPIO_TypeDef* port, uint16_t pin);
+
+void App_Init(void) {
+    // Initialize random number generator
+    srand(HAL_GetTick());
+    
+    // Initialize buttons as input (make sure your hardware has pull-up/pull-down resistors)
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    
+    GPIO_InitStruct.Pin = HIT_BUTTON_PIN | STAND_BUTTON_PIN | END_BUTTON_PIN | YES_BUTTON_PIN | NO_BUTTON_PIN;
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_PULLDOWN; // Assuming active-high buttons with pull-down resistors
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+    
+    reset_game();
+}
+
+uint8_t read_button(GPIO_TypeDef* port, uint16_t pin) {
+    // Simple debounce by checking the button state twice with a small delay
+    if (HAL_GPIO_ReadPin(port, pin) == GPIO_PIN_SET) {
+        HAL_Delay(20); // debounce delay
+        if (HAL_GPIO_ReadPin(port, pin) {
+            while (HAL_GPIO_ReadPin(port, pin)); // wait for button release
+            return 1;
+        }
+    }
+    return 0;
+}
+
+void App_MainLoop(void) {
+    if (game.game_active) {
+        if (!game.game_over) {
+            display_game_state();
+            process_player_input();
+        } else {
+            dealer_play();
+            display_final_results();
+            replay(); // Game completed
+        }
+    } else if (game.play_again) {
+        reset_game();
+    }
+    // Add small delay to prevent CPU overload
+    HAL_Delay(10);
+}
+
+void reset_game(void) {
+    // Reset all game state variables
+    memset(&game, 0, sizeof(game));
+    game.game_active = true;
+
+    // Initial deal
+    game.player_hand[0] = deal_card();
+    game.player_hand[1] = deal_card();
+    game.dealer_hand[0] = deal_card();
+    game.dealer_hand[1] = deal_card();
+    game.player_size = 2;
+    game.dealer_size = 2;
+}
+
+void replay(void) {
+    char msg[] = "\r\nWould you like to play again? (Press YES or NO button)\r\n";
+    
+    while (1) {
+        if (read_button(YES_BUTTON_PORT, YES_BUTTON_PIN)) {
+            game.play_again = true;
+            game.game_active = false; // Will be reset in next MainLoop iteration
+            break;
+        } else if (read_button(NO_BUTTON_PORT, NO_BUTTON_PIN)) {
+            game.play_again = false;
+            game.game_active = false;
+            break;
+        }
+        HAL_Delay(10);
+    }
+}
+
+int deal_card(void) {
+    int cards[] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10, 11};
+    return cards[rand() % 13];
+}
+
+int calculate_score(int hand[], int size) {
+    int sum = 0;
+    int aces = 0;
+
+    for(int i = 0; i < size; i++) {
+        sum += hand[i];
+        if(hand[i] == 11) aces++;
+    }
+
+    if(sum == 21 && size == 2) {
+        return 0; // Blackjack
+    }
+
+    while(sum > 21 && aces > 0) {
+        sum -= 10;
+        aces--;
+    }
+
+    return sum;
+}
+
+void display_game_state(void) {
+    game.player_score = calculate_score(game.player_hand, game.player_size);
+    game.dealer_score = calculate_score(game.dealer_hand, game.dealer_size);
+}
+
+void process_player_input(void) {
+    while (1) {
+        if (read_button(HIT_BUTTON_PORT, HIT_BUTTON_PIN)) {
+            game.player_hand[game.player_size++] = deal_card();
+            break;
+        } else if (read_button(STAND_BUTTON_PORT, STAND_BUTTON_PIN)) {
+            game.game_over = true;
+            break;
+        } else if (read_button(END_BUTTON_PORT, END_BUTTON_PIN)) {
+            game.game_active = false;
+            break;
+        }
+        
+        // Check game conditions
+        game.player_score = calculate_score(game.player_hand, game.player_size);
+        game.dealer_score = calculate_score(game.dealer_hand, game.dealer_size);
+
+        if(game.player_score == 0 || game.dealer_score == 0 || game.player_score > 21) {
+            game.game_over = true;
+            break;
+        }
+        
+        HAL_Delay(10);
+    }
+}
+
+void dealer_play(void) {
+    while(game.dealer_score != 0 && game.dealer_score < 17) {
+        game.dealer_hand[game.dealer_size++] = deal_card();
+        game.dealer_score = calculate_score(game.dealer_hand, game.dealer_size);
+    }
+}
+
+void display_final_results(void) {
+    game.player_score = calculate_score(game.player_hand, game.player_size);
+    game.dealer_score = calculate_score(game.dealer_hand, game.dealer_size);
+}
+
+const char* compare(int player_score, int dealer_score) {
+    if(player_score == dealer_score) {
+        return "It's a draw!";
+    } else if(dealer_score == 0) {
+        return "Dealer has Blackjack! You lose.";
+    } else if(player_score == 0) {
+        return "You win with a Blackjack!";
+    } else if(player_score > 21) {
+        return "You went over. You lose.";
+    } else if(dealer_score > 21) {
+        return "Dealer went over. You win!";
+    } else if(player_score > dealer_score) {
+        return "You win!";
+    } else {
+        return "You lose.";
+    }
+}
