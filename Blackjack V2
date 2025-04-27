@@ -1,22 +1,30 @@
+/*
+ * Final_Project.c
+ *
+ *  Created on: Apr 19, 2025
+ *      Author: rockw
+*/
+
 #include "main.h"
 #include "app.h"
 #include "stdio.h"
 #include "stdlib.h"
 #include "string.h"
 #include "stdbool.h"
+#include "time.h"
 
-// Define button GPIO pins - adjust these according to your actual connections
-#define HIT_BUTTON_PIN    GPIO_PIN_0
-#define HIT_BUTTON_PORT   GPIOA
+#define HIT_BUTTON_PIN    GPIO_PIN_2
+#define HIT_BUTTON_PORT   GPIOB
 #define STAND_BUTTON_PIN  GPIO_PIN_1
-#define STAND_BUTTON_PORT GPIOA
-#define END_BUTTON_PIN    GPIO_PIN_2
-#define END_BUTTON_PORT   GPIOA
-#define YES_BUTTON_PIN    GPIO_PIN_3
-#define YES_BUTTON_PORT   GPIOA
-#define NO_BUTTON_PIN     GPIO_PIN_4
-#define NO_BUTTON_PORT    GPIOA
+#define STAND_BUTTON_PORT GPIOB
+#define END_BUTTON_PIN    GPIO_PIN_15
+#define END_BUTTON_PORT   GPIOB
+#define YES_BUTTON_PIN    GPIO_PIN_14
+#define YES_BUTTON_PORT   GPIOB
+#define NO_BUTTON_PIN     GPIO_PIN_13
+#define NO_BUTTON_PORT    GPIOB
 
+extern UART_HandleTypeDef huart2;
 typedef struct {
     int player_hand[12];
     int dealer_hand[12];
@@ -31,7 +39,7 @@ typedef struct {
 
 GameState game;
 
-// Function prototypes
+
 int deal_card(void);
 int calculate_score(int hand[], int size);
 void play_game(void);
@@ -47,34 +55,31 @@ void replay(void);
 uint8_t read_button(GPIO_TypeDef* port, uint16_t pin);
 
 void App_Init(void) {
-    // Initialize random number generator
-    srand(HAL_GetTick());
-    
-    // Initialize buttons as input (make sure your hardware has pull-up/pull-down resistors)
+    srand(HAL_GetTick()^(time(NULL) & 0xFFFF));
+
     GPIO_InitTypeDef GPIO_InitStruct = {0};
-    
-    __HAL_RCC_GPIOA_CLK_ENABLE();
-    
-    GPIO_InitStruct.Pin = HIT_BUTTON_PIN | STAND_BUTTON_PIN | END_BUTTON_PIN | YES_BUTTON_PIN | NO_BUTTON_PIN;
-    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-    GPIO_InitStruct.Pull = GPIO_PULLDOWN; // Assuming active-high buttons with pull-down resistors
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-    
-    reset_game();
+
+       GPIO_InitStruct.Pin = HIT_BUTTON_PIN | STAND_BUTTON_PIN | END_BUTTON_PIN | YES_BUTTON_PIN | NO_BUTTON_PIN;
+       GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+       GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+       GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+       HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+       reset_game();
 }
 
 uint8_t read_button(GPIO_TypeDef* port, uint16_t pin) {
-    // Simple debounce by checking the button state twice with a small delay
+
     if (HAL_GPIO_ReadPin(port, pin) == GPIO_PIN_SET) {
-        HAL_Delay(20); // debounce delay
-        if (HAL_GPIO_ReadPin(port, pin) {
-            while (HAL_GPIO_ReadPin(port, pin)); // wait for button release
+        HAL_Delay(20);
+        if (HAL_GPIO_ReadPin(port, pin)) {
+            while (HAL_GPIO_ReadPin(port, pin));
             return 1;
         }
     }
     return 0;
 }
+
 
 void App_MainLoop(void) {
     if (game.game_active) {
@@ -84,40 +89,43 @@ void App_MainLoop(void) {
         } else {
             dealer_play();
             display_final_results();
-            replay(); // Game completed
+            replay();
         }
-    } else if (game.play_again) {
-        reset_game();
+    }else if (game.play_again){
+    	reset_game();
     }
-    // Add small delay to prevent CPU overload
+
     HAL_Delay(10);
 }
 
 void reset_game(void) {
-    // Reset all game state variables
     memset(&game, 0, sizeof(game));
     game.game_active = true;
 
-    // Initial deal
     game.player_hand[0] = deal_card();
     game.player_hand[1] = deal_card();
     game.dealer_hand[0] = deal_card();
     game.dealer_hand[1] = deal_card();
     game.player_size = 2;
     game.dealer_size = 2;
+
+    HAL_UART_Transmit(&huart2, (uint8_t*)"\r\nNew game started!\r\n", 21, HAL_MAX_DELAY);
 }
 
 void replay(void) {
     char msg[] = "\r\nWould you like to play again? (Press YES or NO button)\r\n";
-    
+    HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+
     while (1) {
         if (read_button(YES_BUTTON_PORT, YES_BUTTON_PIN)) {
             game.play_again = true;
-            game.game_active = false; // Will be reset in next MainLoop iteration
+            game.game_active = false;
+            HAL_UART_Transmit(&huart2, (uint8_t*)"\r\nStarting new game...\r\n", 23, HAL_MAX_DELAY);
             break;
         } else if (read_button(NO_BUTTON_PORT, NO_BUTTON_PIN)) {
             game.play_again = false;
             game.game_active = false;
+            HAL_UART_Transmit(&huart2, (uint8_t*)"\r\nThanks for playing, Goodbye!\r\n", 31, HAL_MAX_DELAY);
             break;
         }
         HAL_Delay(10);
@@ -125,8 +133,17 @@ void replay(void) {
 }
 
 int deal_card(void) {
-    int cards[] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10, 11};
-    return cards[rand() % 13];
+    int cards[] = {2,3,4,5,6,7,8,9,10,10,10,10,11};
+
+    static int first_card = 1;
+    if(first_card){
+    	first_card = 0;
+
+    	for(int i = 0; i < (HAL_GetTick() & 0x7); i++){
+    		rand();
+    	}
+    }
+    return cards[rand()%13];
 }
 
 int calculate_score(int hand[], int size) {
@@ -139,7 +156,7 @@ int calculate_score(int hand[], int size) {
     }
 
     if(sum == 21 && size == 2) {
-        return 0; // Blackjack
+        return 0;
     }
 
     while(sum > 21 && aces > 0) {
@@ -153,44 +170,88 @@ int calculate_score(int hand[], int size) {
 void display_game_state(void) {
     game.player_score = calculate_score(game.player_hand, game.player_size);
     game.dealer_score = calculate_score(game.dealer_hand, game.dealer_size);
+
+    char msg[100];
+    sprintf(msg, "\r\nYour cards: ");
+    HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+
+    for(int i = 0; i < game.player_size; i++) {
+        sprintf(msg, "%d ", game.player_hand[i]);
+        HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+    }
+    sprintf(msg, " --> Current Score: %d\r\n", game.player_score);
+    HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+    if (game.player_score>21){HAL_UART_Transmit(&huart2, (uint8_t*)" BUST!", 8, HAL_MAX_DELAY);
+    }
+
+    sprintf(msg, "Dealer's First Card: %d\r\n", game.dealer_hand[0]);
+    HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+    sprintf(msg, "Would you like to Hit, Stand, or End the Game?");
+    HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
 }
 
 void process_player_input(void) {
-    while (1) {
-        if (read_button(HIT_BUTTON_PORT, HIT_BUTTON_PIN)) {
-            game.player_hand[game.player_size++] = deal_card();
-            break;
-        } else if (read_button(STAND_BUTTON_PORT, STAND_BUTTON_PIN)) {
-            game.game_over = true;
-            break;
-        } else if (read_button(END_BUTTON_PORT, END_BUTTON_PIN)) {
-            game.game_active = false;
-            break;
-        }
-        
-        // Check game conditions
-        game.player_score = calculate_score(game.player_hand, game.player_size);
-        game.dealer_score = calculate_score(game.dealer_hand, game.dealer_size);
-
-        if(game.player_score == 0 || game.dealer_score == 0 || game.player_score > 21) {
-            game.game_over = true;
-            break;
-        }
-        
-        HAL_Delay(10);
+	while (1) {
+	        if (read_button(HIT_BUTTON_PORT, HIT_BUTTON_PIN)) {
+	            game.player_hand[game.player_size++] = deal_card();
+	            HAL_UART_Transmit(&huart2, (uint8_t*)"\r\nYou chose to Hit\r\n", 20, HAL_MAX_DELAY);
+	            game.player_score = calculate_score(game.player_hand, game.player_size);
+	            if (game.player_score > 21) {
+	            	HAL_UART_Transmit(&huart2, (uint8_t*)"\r\nBUST! Your score is over 21.\r\n", 32, HAL_MAX_DELAY);
+	            	game.game_over = true;
+	            	return;
+	            }
+	            break;
+	        } else if (read_button(STAND_BUTTON_PORT, STAND_BUTTON_PIN)) {
+	            game.game_over = true;
+	            HAL_UART_Transmit(&huart2, (uint8_t*)"\r\nYou chose to Stand\r\n", 22, HAL_MAX_DELAY);
+	            break;
+	        } else if (read_button(END_BUTTON_PORT, END_BUTTON_PIN)) {
+	            HAL_UART_Transmit(&huart2, (uint8_t*)"\r\nGame ended by player.\r\n", 23, HAL_MAX_DELAY);
+	            game.game_active = false;
+	            break;
+	        }
+	        HAL_Delay(10);
     }
 }
 
 void dealer_play(void) {
-    while(game.dealer_score != 0 && game.dealer_score < 17) {
+	HAL_UART_Transmit(&huart2, (uint8_t*)"\r\nDealer's turn...\r\n", 19, HAL_MAX_DELAY);
+	while(game.dealer_score != 0 && game.dealer_score < 17) {
         game.dealer_hand[game.dealer_size++] = deal_card();
         game.dealer_score = calculate_score(game.dealer_hand, game.dealer_size);
-    }
-}
+
+        char msg[50];
+               sprintf(msg, "Dealer draws a card. Total cards: %d\r\n", game.dealer_size);
+               HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+           }
+       }
 
 void display_final_results(void) {
     game.player_score = calculate_score(game.player_hand, game.player_size);
     game.dealer_score = calculate_score(game.dealer_hand, game.dealer_size);
+
+    char final_msg[200];
+    sprintf(final_msg, "\r\nYour final hand: ");
+    for(int i = 0; i < game.player_size; i++) {
+        char card_str[4];
+        sprintf(card_str, "%d ", game.player_hand[i]);
+        strcat(final_msg, card_str);
+    }
+    sprintf(final_msg + strlen(final_msg), ", final score: %d\r\n", game.player_score);
+
+    strcat(final_msg, "Dealer's final hand: ");
+    for(int i = 0; i < game.dealer_size; i++) {
+        char card_str[4];
+        sprintf(card_str, "%d ", game.dealer_hand[i]);
+        strcat(final_msg, card_str);
+    }
+    sprintf(final_msg + strlen(final_msg), ", final score: %d\r\n", game.dealer_score);
+
+    HAL_UART_Transmit(&huart2, (uint8_t*)final_msg, strlen(final_msg), HAL_MAX_DELAY);
+    const char* result = compare(game.player_score, game.dealer_score);
+    HAL_UART_Transmit(&huart2, (uint8_t*)result, strlen(result), HAL_MAX_DELAY);
+    HAL_UART_Transmit(&huart2, (uint8_t*)"\r\n", 2, HAL_MAX_DELAY);
 }
 
 const char* compare(int player_score, int dealer_score) {
