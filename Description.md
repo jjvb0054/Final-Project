@@ -1,2 +1,3 @@
 Blackjack V1 is a simple, text-based implementation of the classic card game, designed to run in the terminal. It uses a random module to shuffle a deck of cards and follows basic Blackjack rules, where the player can choose to hit or stand. The dealer operates on fixed rules, one of them being standing on a hand value of 17 or higher.
+
 Blackjack V2 builds upon V1 with significant improvements, introducing more complex gameplay  with the introduction of GPIO inputs and the use of external buttons connected via breadboard. This version likely incorporates doubling down, splitting pairs, and insurance bets, along with a structured betting system that tracks wins and losses.
