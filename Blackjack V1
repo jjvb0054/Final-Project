@@ -20,7 +20,7 @@ typedef struct {
 
 GameState game;
 
-// Function prototypes
+
 int deal_card(void);
 int calculate_score(int hand[], int size);
 void play_game(void);
@@ -36,7 +36,6 @@ void reset_game(void);
 void replay(void);
 
 void App_Init(void) {
-    // Initialize random number generator
     srand(HAL_GetTick());
     reset_game();
 }
@@ -49,21 +48,18 @@ void App_MainLoop(void) {
         } else {
             dealer_play();
             display_final_results();
-            replay(); // Game completed
+            replay();
         }
     }else if (game.play_again){
     	reset_game();
     }
-    // Add small delay to prevent CPU overload
     HAL_Delay(10);
 }
 
 void reset_game(void) {
-    // Reset all game state variables
     memset(&game, 0, sizeof(game));
     game.game_active = true;
 
-    // Initial deal
     game.player_hand[0] = deal_card();
     game.player_hand[1] = deal_card();
     game.dealer_hand[0] = deal_card();
@@ -90,7 +86,7 @@ void replay(void) {
         game.game_active = false;
     } else {
         HAL_UART_Transmit(&huart2, (uint8_t*)"\r\nInvalid input. Please try again.\r\n", 36, HAL_MAX_DELAY);
-        replay(); // Recursively ask again
+        replay();
     }
 }
 
@@ -160,7 +156,6 @@ void process_player_input(void) {
         HAL_UART_Transmit(&huart2, (uint8_t*)"\r\nInvalid input. Please try again.\r\n", 36, HAL_MAX_DELAY);
     }
 
-    // Check game conditions after player action
     game.player_score = calculate_score(game.player_hand, game.player_size);
     game.dealer_score = calculate_score(game.dealer_hand, game.dealer_size);
 
@@ -234,5 +229,5 @@ void get_user_input(char* input) {
 }
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-    // Handle received data if using interrupts
+
 }
